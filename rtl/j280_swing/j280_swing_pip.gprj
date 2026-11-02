@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE gowin-fpga-project>
+<Project>
+    <Template>FPGA</Template>
+    <Version>5</Version>
+    <Device name="GW2A-55C" pn="GW2A-LV55PG484C8/I7">gw2a55c-005</Device>
+    <FileList>
+        <File path="../j280_measure/j280_adc_capture.v" type="file.verilog" enable="1"/>
+        <File path="../j280_balance/j280_encoder_filtered.v" type="file.verilog" enable="1"/>
+        <File path="../j280_measure/j280_uart_tx.v" type="file.verilog" enable="1"/>
+        <File path="../j280_state/j280_signed_divider.v" type="file.verilog" enable="1"/>
+        <File path="../j280_state/j280_raw_estimator.v" type="file.verilog" enable="1"/>
+        <File path="../j280_state/j280_state_packet_tx.v" type="file.verilog" enable="1"/>
+        <File path="../j280_motor_test/j280_uart_rx.v" type="file.verilog" enable="1"/>
+        <File path="../j280_motor_test/j280_local_inputs.v" type="file.verilog" enable="1"/>
+        <File path="../j280_balance/j280_balance_cmd_rx.v" type="file.verilog" enable="1"/>
+        <File path="j280_balance_pip_core.v" type="file.verilog" enable="1"/>
+        <File path="../j280_balance/j280_balance_pwm.v" type="file.verilog" enable="1"/>
+        <File path="j280_swing_tables.v" type="file.verilog" enable="1"/>
+        <File path="j280_swing_core.v" type="file.verilog" enable="1"/>
+        <File path="j280_traj.v" type="file.verilog" enable="1"/>
+        <File path="j280_aux_inputs.v" type="file.verilog" enable="1"/>
+        <File path="j280_builtin.v" type="file.verilog" enable="1"/>
+        <File path="j280_swing_guard.v" type="file.verilog" enable="1"/>
+        <File path="j280_swing_pip_top.v" type="file.verilog" enable="1"/>
+        <File path="j280_swing.cst" type="file.cst" enable="1"/>
+        <File path="j280_swing.sdc" type="file.sdc" enable="1"/>
+    </FileList>
+</Project>

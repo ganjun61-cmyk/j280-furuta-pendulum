@@ -1,0 +1,243 @@
+#!/usr/bin/env python3
+"""Verify motor-test v3 offline, optionally build and archive. No board access."""
+import argparse
+from datetime import datetime, timedelta, timezone
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+
+from j280_measurement import crc16_ccitt
+from j280_motor_test import FrameStream
+from j280_verify_measurement import _run, check_timing_report
+from j280_verify_state import check_reset_timing
+
+ROOT = Path(__file__).resolve().parents[1]
+ARCHIVE = ROOT / 'docs/data/motor-test-2026-10-16'
+SHARED = [ROOT / 'rtl/j280_measure' / name for name in
+          ('j280_adc_capture.v', 'j280_encoder.v', 'j280_uart_tx.v')]
+SHARED += [ROOT / 'rtl/j280_state' / name for name in
+           ('j280_signed_divider.v', 'j280_raw_estimator.v', 'j280_state_packet_tx.v')]
+EVIDENCE_FILES = ('wire.bin', 'pins.txt', 'snapshots.csv', 'commands.hex',
+                  'scenario.txt', 'compile.log', 'simulation.log', 'result.json')
+
+
+def sha256(path):
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def source_files():
+    return sorted(set(SHARED + list((ROOT / 'rtl/j280_motor_test').glob('*'))
+                      + list((ROOT / 'sim/j280_motor_test').glob('*.v'))
+                      + list((ROOT / 'tests').glob('test_j280_motor*.py'))
+                      + [ROOT / 'scripts' / name for name in
+                         ('j280_measurement.py', 'j280_motor_test.py', 'j280_audit_motor_capture.py',
+                          'j280_verify_motor_test.py', 'j280_verify_measurement.py',
+                          'j280_verify_state.py')]))
+
+
+def fingerprints(paths):
+    return {p.relative_to(ROOT).as_posix(): sha256(p) for p in paths if p.is_file()}
+
+
+def check_evidence(directory):
+    """Re-decode real UART bytes; test counts alone are insufficient evidence."""
+    evidence = {}
+    try:
+        for name in ('default', 'stops'):
+            folder = directory / name
+            for file in EVIDENCE_FILES:
+                path = folder / file
+                if not path.is_file():
+                    raise ValueError(f'missing {name} integration evidence: {file}')
+                if file in ('wire.bin', 'pins.txt', 'snapshots.csv') and not path.stat().st_size:
+                    raise ValueError(f'empty {name} integration evidence: {file}')
+            result = json.loads((folder / 'result.json').read_text(encoding='utf-8'))
+            wire = (folder / 'wire.bin').read_bytes()
+            stream = FrameStream()
+            rows = stream.feed(wire)
+            if (not rows or len(rows) != result['frames'] or stream.buffered_bytes
+                    or any(stream.stats[key] for key in
+                           ('frames_invalid', 'discarded_bytes', 'seq_missed',
+                            'seq_duplicates', 'seq_out_of_order', 'resets', 'continuity_errors'))):
+                raise ValueError(f'unclean {name} UART evidence: {stream.stats}')
+            if [r['seq'] for r in rows] != list(range(len(rows))):
+                raise ValueError('top sample sequence is not continuous from reset')
+            if [r['tick_us'] for r in rows] != [2000 * (i + 1) for i in range(len(rows))]:
+                raise ValueError('top sample timing is not 500 Hz')
+            commands = [bytes.fromhex(line)[::-1] for line in
+                        (folder / 'commands.hex').read_text(encoding='ascii').splitlines()]
+            expected = {int.from_bytes(c[4:6], 'little'): int.from_bytes(c[-2:], 'little')
+                        for c in commands if c[3] == 1}
+            for c in commands:
+                if len(c) != 20 or crc16_ccitt(c[2:18]) != int.from_bytes(c[-2:], 'little'):
+                    raise ValueError('integration command fixture CRC is invalid')
+            for row in rows:
+                if row['config_loaded'] and expected.get(row['config_id']) != row['config_crc']:
+                    raise ValueError('configuration echo differs from submitted command')
+            if not any(r['output_enabled'] for r in rows):
+                raise ValueError('top integration did not exercise a motor pulse')
+            reasons = {r['stop_reason'] for r in rows}
+            if name == 'default':
+                if (rows[-1]['state'], rows[-1]['stop_reason']) != ('SAFE', 'complete'):
+                    raise ValueError('default top scenario did not complete normally')
+            elif not {'complete', 'stop_key', 'arm_off', 'host_abort', 'sensor_invalid'} <= reasons:
+                raise ValueError('missing integrated stop scenarios')
+            evidence[name] = {'frames': len(rows), 'stats': stream.stats,
+                              'wire_sha256': sha256(folder / 'wire.bin'),
+                              'evidence_sha256': {file: sha256(folder / file) for file in EVIDENCE_FILES},
+                              'reasons': sorted(reasons)}
+    except (OSError, KeyError, IndexError, json.JSONDecodeError) as error:
+        raise ValueError(f'missing/incomplete integration evidence: {error}') from error
+    return evidence
+
+
+def stage_firmware(destination):
+    destination.mkdir()
+    paths = SHARED + [p for p in (ROOT / 'rtl/j280_motor_test').iterdir()
+                      if p.suffix in ('.v', '.cst', '.sdc', '.tcl', '.gprj')]
+    for p in paths:
+        shutil.copy2(p, destination / p.name)
+    # The command-line build uses a flat ASCII source directory. Make the GUI
+    # project in that directory refer to the same flat copies as run.tcl.
+    project = destination / 'j280_motor_test.gprj'
+    text = project.read_text(encoding='utf-8')
+    project.write_text(text.replace('../j280_measure/', '').replace('../j280_state/', ''),
+                       encoding='utf-8')
+
+
+def archive_verified_run(run, destination):
+    """Seal an already verified run after review without repeating unchanged tests."""
+    try:
+        result = json.loads((run / 'verification.json').read_text(encoding='utf-8'))
+        if (not result.get('build_performed') or not result.get('python_tests_passed')
+                or result.get('board_accessed') is not False
+                or result['source_sha256'] != fingerprints(source_files())):
+            raise ValueError('verified inputs differ from current source or build is incomplete')
+        for path, digest in result['source_sha256'].items():
+            if sha256(run / 'source' / path) != digest:
+                raise ValueError(f'verified source snapshot differs: {path}')
+        build = run / 'gowin'
+        for name, digest in result['staged_firmware_sha256'].items():
+            if sha256(build / name) != digest:
+                raise ValueError(f'compiled source differs: {name}')
+        fs = build / 'impl/pnr/j280_motor_test.fs'
+        if sha256(fs) != result['bitstream_sha256']:
+            raise ValueError('verified bitstream differs')
+        if check_evidence(run / 'integration') != result['integration']:
+            raise ValueError('integration evidence differs from the verified manifest')
+        timing = build / 'impl/pnr/j280_motor_test_tr_content.html'
+        text = timing.read_text(encoding='utf-8')
+        check_timing_report(text)
+        check_reset_timing(text)
+        if destination.exists():
+            raise ValueError('archive already exists')
+        destination.mkdir(parents=True, exist_ok=False)
+        shutil.copytree(run / 'source', destination / 'source')
+        shutil.copytree(run / 'integration', destination / 'integration')
+        for src, name in ((fs, 'j280_motor_test.fs'), (timing, 'timing-report.html'),
+                          (build / 'impl/pnr/j280_motor_test.rpt.txt', 'pnr-report.txt'),
+                          (build / 'build-console.log', 'build-console.log'),
+                          (run / 'python-tests.log', 'python-tests.log')):
+            shutil.copy2(src, destination / name)
+        shutil.copy2(run / 'verification.json', destination / 'verification.json')
+        if sha256(destination / fs.name) != result['bitstream_sha256']:
+            raise ValueError('archived bitstream differs')
+        for path, digest in result['source_sha256'].items():
+            if sha256(destination / 'source' / path) != digest:
+                raise ValueError(f'archived source differs: {path}')
+        if check_evidence(destination / 'integration') != result['integration']:
+            raise ValueError('archived integration evidence differs')
+        return result
+    except (OSError, KeyError, json.JSONDecodeError) as error:
+        raise ValueError(f'incomplete verified run: {error}') from error
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    local = Path(os.environ.get('LOCALAPPDATA', str(Path.home())))
+    parser.add_argument('--build', action='store_true')
+    parser.add_argument('--archive', action='store_true')
+    parser.add_argument('--archive-dir', type=Path, default=ARCHIVE)
+    parser.add_argument('--build-dir', type=Path, default=local / 'J280Build/motor-test-verification')
+    parser.add_argument('--iverilog-bin', type=Path,
+                        default=local / 'J280Tools/iverilog-msys2/ucrt64/bin')
+    parser.add_argument('--gowin', type=Path,
+                        default=Path('C:/Gowin/Gowin_V1.9.12.03_x64/Gowin_V1.9.12.03_x64/IDE/bin/gw_sh.exe'))
+    args = parser.parse_args(argv)
+    try:
+        if args.archive and not args.build:
+            raise ValueError('--archive requires --build')
+        if args.archive and args.archive_dir.exists():
+            raise ValueError('archive directory already exists; choose a new --archive-dir')
+        if not str(args.build_dir.resolve()).isascii():
+            raise ValueError('build path must be ASCII')
+        for name in ('iverilog.exe', 'vvp.exe'):
+            if not (args.iverilog_bin / name).is_file():
+                raise ValueError(f'missing simulator: {name}')
+        args.build_dir.mkdir(parents=True, exist_ok=True)
+        run = Path(tempfile.mkdtemp(prefix='run-', dir=args.build_dir))
+        inputs = source_files()
+        before = fingerprints(inputs)
+        source = run / 'source'
+        source.mkdir()
+        for path in inputs:
+            target = source / path.relative_to(ROOT)
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(path, target)
+        env = dict(os.environ, PATH=str(args.iverilog_bin.resolve()) + os.pathsep + os.environ.get('PATH', ''),
+                   J280_MOTOR_TEST_EVIDENCE_DIR=str(run / 'integration'))
+        # The existing RTL harnesses resolve their tools via LOCALAPPDATA.
+        expected_tools = Path(env.get('LOCALAPPDATA', '')) / 'J280Tools/iverilog-msys2/ucrt64/bin'
+        if expected_tools.resolve() != args.iverilog_bin.resolve():
+            raise ValueError('set LOCALAPPDATA to the tool root used by RTL harnesses')
+        print('RUN complete Python/HDL regression; evidence:', run, flush=True)
+        unit = _run([sys.executable, '-m', 'unittest', 'discover', '-s', 'tests', '-p', 'test_j280_*.py'],
+                    ROOT, env=env, log=run / 'python-tests.log', timeout=1200)
+        match = re.search(r'Ran (\d+) tests?', unit)
+        if not match or not re.search(r'(?m)^OK\s*$', unit):
+            raise ValueError('test runner supplied no successful test result')
+        evidence = check_evidence(run / 'integration')
+        print('PASS tests:', match.group(1), '; UART/atomic snapshots/pin waveforms checked', flush=True)
+        result = {'checked_at': datetime.now(timezone(timedelta(hours=8))).isoformat(),
+                  'run_directory': str(run.resolve()), 'python_tests_passed': int(match.group(1)),
+                  'integration': evidence, 'source_sha256': before,
+                  'build_performed': args.build, 'board_accessed': False}
+        if args.build:
+            build = run / 'gowin'
+            stage_firmware(build)
+            result['staged_firmware_sha256'] = {p.name: sha256(p) for p in sorted(build.iterdir())}
+            print('RUN Gowin synthesis, place/route and timing', flush=True)
+            console = _run([args.gowin.resolve(), 'run.tcl'], build,
+                           log=build / 'build-console.log', timeout=1800)
+            fs = build / 'impl/pnr/j280_motor_test.fs'
+            if not fs.is_file() or not fs.stat().st_size:
+                raise ValueError('Gowin produced no bitstream')
+            timing = build / 'impl/pnr/j280_motor_test_tr_content.html'
+            timing_text = timing.read_text(encoding='utf-8')
+            result['timing'] = check_timing_report(timing_text)
+            result['timing']['minimum_reset_slack_ns'] = check_reset_timing(timing_text)
+            result['build_warnings'] = [s.strip() for s in console.splitlines() if re.search(r'\bWARN\b', s)]
+            result['bitstream'] = str(fs.resolve())
+            result['bitstream_sha256'] = sha256(fs)
+            print('PASS build and Setup/Hold/Recovery/Removal; warnings:', len(result['build_warnings']), flush=True)
+        if fingerprints(source_files()) != before:
+            raise ValueError('source changed during verification; re-run on final files')
+        (run / 'verification.json').write_text(json.dumps(result, indent=2), encoding='utf-8')
+        if args.archive:
+            archive_verified_run(run, args.archive_dir)
+            print('PASS archived:', args.archive_dir, flush=True)
+        print('PASS verification manifest:', run / 'verification.json', flush=True)
+        return 0
+    except (OSError, ValueError, RuntimeError, subprocess.TimeoutExpired) as error:
+        print(f'FAIL: {error}', file=sys.stderr)
+        return 1
+
+
+if __name__ == '__main__':
+    sys.exit(main())

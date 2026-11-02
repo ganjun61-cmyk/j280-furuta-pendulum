@@ -1,0 +1,88 @@
+{
+ "model": "j280_swingup_sim.simulate_fixed (j280_swing_math in SWING, balance-511 integer observer after catch)",
+ "map": "angle-map-v2",
+ "exit_code": 80,
+ "float_params": {
+  "strategy": "ref",
+  "amp_deg": 42.71514437634275,
+  "v_sat": 3.0716322793724706,
+  "lead_s": 0.10036856315124788,
+  "kp": 76.70413637760787,
+  "kd": 4.890778967914806,
+  "energy_margin": 7.889643279516627,
+  "e_scale": 115.2579976789868,
+  "catch_deg": 20,
+  "catch_rate": 9
+ },
+ "swing_values": {
+  "config_id": 511,
+  "swing_ms": 6000,
+  "travel_count": 220,
+  "blind_samples": 100,
+  "step_code": 24,
+  "edge_low": 40,
+  "edge_high": 960,
+  "hang_code": 221,
+  "hang_window": 15,
+  "kick_samples": 60,
+  "kick_compare": 1000,
+  "lead_samples": 50,
+  "table_crc": 36663,
+  "catch_angle": 238609294,
+  "catch_rate": 12304175,
+  "gravity": 258541,
+  "gravity_lead": 12927064,
+  "kv": 21173120,
+  "kdrive": 67028667,
+  "margin": 5468,
+  "kscale": 53765,
+  "amp": 8087097,
+  "kp": 759251,
+  "kd": 4841105
+ },
+ "sweep_3_seeds": {
+  "runs": 48,
+  "success": 48,
+  "failures": [],
+  "worst_catch_s": 1.918,
+  "worst_arm_deg": 55.7,
+  "worst_blind_ms": 20,
+  "worst_stall_samples": 8
+ },
+ "stress_6_seeds_with_combined_cases": {
+  "success": 101,
+  "runs": 120,
+  "worst_arm_deg": 76.5,
+  "worst_stall_samples": 9,
+  "failures": [
+   "gain +30% friction -30%: angle_limit",
+   "gain -30% friction +30%: angle_limit",
+   "gain -30% friction +30%: travel_limit",
+   "map warp -4 deg: travel_limit",
+   "warp -4 zero -1 noise 1.5: angle_limit",
+   "warp -4 zero -1 noise 1.5: travel_limit"
+  ]
+ },
+ "grid_note": "catch 15 deg: 47/48 (warp +4 swing_timeout at 16.6 deg); catch 18-20, margin 7.9, amp 42.7: 48/48; margins 12/16 or amp 38 worse",
+ "encoder_dead": [
+  {
+   "case": "encoder dead 0.3 s",
+   "termination": "arm_stall",
+   "at_s": 0.41,
+   "max_arm_deg": 35.7
+  },
+  {
+   "case": "encoder dead 0.8 s",
+   "termination": "arm_stall",
+   "at_s": 1.092,
+   "max_arm_deg": 36.3
+  },
+  {
+   "case": "encoder dead 1.2 s",
+   "termination": "angle_limit",
+   "at_s": 1.998,
+   "max_arm_deg": 36.3
+  }
+ ],
+ "spec_note": "2026-10-18 after review: blind_samples 100, a valid but jumped sample is blind (not a fault), re-acquired within step*(1+min(blind,3)) or in an edge band; guard arm-stall 500/25"
+}

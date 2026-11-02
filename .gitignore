@@ -1,0 +1,17 @@
+# Python
+__pycache__/
+*.py[cod]
+
+# Gowin build output
+build/
+impl/
+*.log
+
+# Local scratch
+tmp/
+*.bak
+*.binx
+
+# OS
+.DS_Store
+Thumbs.db

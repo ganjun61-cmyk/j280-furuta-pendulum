@@ -1,0 +1,82 @@
+{
+ "created": "2026-10-18",
+ "schema": "j280-angle-map-v1",
+ "note": "Provisional full-circle map. Increasing side from phone static points; far side and dead zone from one hand-released free swing (free-swing-01, 51.44-53.95 s) using a constant per-half-cycle amplitude decay. Not an independent calibration of the decreasing side. v2: decreasing side corrected with free-swing-02 (release from ~87 deg, 76.85-80.0 s): after the shift the symmetry residual is within about +-0.4 deg on that side.",
+ "dead_zone_deg_from_hanging": [
+  -90.0,
+  -76.1
+ ],
+ "knots": [
+  {
+   "code": 0.0,
+   "deg": -76.1,
+   "source": "decreasing-side edge: free-swing-02 symmetry check (5 left turns, codes 0.7-55.4) showed the v1 map 1.3-1.9 deg (mean 1.64) too far; shifted by 1.5 deg"
+  },
+  {
+   "code": 221.0,
+   "deg": 0.0,
+   "source": "hanging, 2026-10-17/18 static mean 220.5-222"
+  },
+  {
+   "code": 308.7,
+   "deg": 30.0,
+   "source": "phone round 1"
+  },
+  {
+   "code": 392.4,
+   "deg": 60.0,
+   "source": "phone round 1"
+  },
+  {
+   "code": 474.8,
+   "deg": 90.0,
+   "source": "phone round 1"
+  },
+  {
+   "code": 558.4,
+   "deg": 120.0,
+   "source": "phone round 1"
+  },
+  {
+   "code": 644.7,
+   "deg": 150.0,
+   "source": "phone round 1"
+  },
+  {
+   "code": 702.6,
+   "deg": 170.0,
+   "source": "phone local point 699.6 shifted +3 to the balance zero"
+  },
+  {
+   "code": 721.9,
+   "deg": 175.0,
+   "source": "phone local point 718.9 shifted +3"
+  },
+  {
+   "code": 737.0,
+   "deg": 180.0,
+   "source": "upright: mean ADC while the controller held the pendulum (balance-451/462/463)"
+  },
+  {
+   "code": 754.3,
+   "deg": 185.0,
+   "source": "phone local point 751.3 shifted +3"
+  },
+  {
+   "code": 771.4,
+   "deg": 190.0,
+   "source": "phone local point 768.4 shifted +3"
+  },
+  {
+   "code": 1001.0,
+   "deg": 262.7,
+   "source": "free-swing-01 left turning point, amplitude interpolated from right turns 105.9/88.6 deg"
+  },
+  {
+   "code": 1023.0,
+   "deg": 270.0,
+   "source": "far dead-zone edge, from code 1001 at 262.7 deg with ~3 code/deg"
+  }
+ ],
+ "version": 2
+}
